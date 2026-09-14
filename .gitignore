@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Pytest
+.pytest_cache/0
+
+# macOS
+.DS_Store
+
+# Variáveis de ambiente
+.env
+
+# Banco de dados de teste
+/test/test.db
