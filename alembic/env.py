@@ -17,6 +17,8 @@ if config.config_file_name is not None:
 # Ignorar import não usado. Serve apenas para a linha logo abaixo
 # noinspection PyUnresolvedReference
 from contas_a_pagar_e_receber.models.contas_a_pagar_e_receber_model import ContasPagarReceber
+# noinspection PyUnresolvedReference
+from contas_a_pagar_e_receber.models.fornecedor_cliente_model import FornecedorCliente
 
 # add your model's MetaData object here
 # for 'autogenerate' support
