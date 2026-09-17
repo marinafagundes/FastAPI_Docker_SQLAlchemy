@@ -4,15 +4,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from shared.dependencies import get_db
 from contas_a_pagar_e_receber.models.fornecedor_cliente_model import FornecedorCliente
+from shared.dependencies import get_db
 from shared.exceptions import NotFound
 
 # Cria um router específico para as operações relacionadas
 # às contas a pagar e a receber
 router = APIRouter(
-    prefix="/fornecedor-cliente", 
-    tags=["Fornecedores e Clientes"]
+    prefix="/fornecedor-cliente"
 )
 
 # ============================================================
@@ -86,7 +85,7 @@ def listar_fornecedor_cliente(
 def obter_fornecedor_cliente_por_id(
     id_do_fornecedor_cliente: int,
     db: Session = Depends(get_db)
-)-> FornecedorClienteResponse:
+)-> List[FornecedorClienteResponse]:
 
     # Consulta a tabela FornecedorCliente e retorna
     # todas as contas cadastradas.
@@ -173,7 +172,6 @@ def atualizar_fornecedor_cliente(
     db.commit()
     db.refresh(fornecedor_cliente)
     return fornecedor_cliente
-    assert response_put.json()['valor'] == 111
 
 # No método DELETE, não há response model
 # Também precisa passar o id
@@ -202,10 +200,13 @@ def excluir_fornecedor_cliente(
 # OUTRAS OPERAÇÕES: HEAD (recupera apenas cabeçalhos), OPTIONS (descreve opções de comunicação para um recurso)
 # Dica de consulta: guia belgium bank rest API github
 
-def busca_fornecedor_cliente_por_id(id_do_fornecedor_cliente: int, db: Session) -> FornecedorCliente:
+def busca_fornecedor_cliente_por_id(
+    id_do_fornecedor_cliente: int, 
+    db: Session
+) -> FornecedorCliente:
     fornecedor_cliente: FornecedorCliente = db.query(FornecedorCliente).get(id_do_fornecedor_cliente)
 
     if fornecedor_cliente is None:
-        raise NotFound("Fornecedor ou Cliente")
+        raise NotFound("Fornecedor Cliente")
     
     return fornecedor_cliente
