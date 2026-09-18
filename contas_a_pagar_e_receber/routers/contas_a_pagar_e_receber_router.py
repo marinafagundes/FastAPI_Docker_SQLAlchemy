@@ -1,7 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List
+from typing import List, OrderedDict
+
+# Alternativa de dicionário
+# from itertools import groupby
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -20,6 +23,8 @@ router = APIRouter(
     prefix="/contas-a-pagar-e-receber"
 )
 
+QUANTIDADE_PERMITIDA_POR_MES = 100
+
 # ============================================================
 # MODELOS DE DADOS DA API
 # ============================================================
@@ -37,7 +42,8 @@ class ContaPagarReceberResponse(BaseModel):
     descricao: str
     valor: Decimal
     tipo: str  # "PAGAR" ou "RECEBER"
-    data_baixa = datetime | None = None  # Data de baixa da conta
+    data_previsao = date # Sempre será preenchida
+    data_baixa = date | None = None  # Data de baixa da conta
     valor_baixa = Decimal | None = None
     esta_baixada = bool | None = None
     fornecedor: FornecedorClienteResponse | None = None  
@@ -78,6 +84,12 @@ class ContaPagarReceberRequest(BaseModel):
     # Id do Fornecedor ou Cliente associado à conta
     fornecedor_cliente_id: int | None = None
 
+    data_previsao = date 
+
+class PrevisaoPorMes(BaseModel):
+    mes: int
+    valor_total: Decimal
+
 # ============================================================
 # ROTAS
 # ============================================================
@@ -99,6 +111,14 @@ def listar_contas(
     # Consulta a tabela ContasPagarReceber e retorna
     # todas as contas cadastradas.
     return db.query(ContasPagarReceber).all()
+
+# A ordem importa: a url fixa deve estar antes de uma url variável
+@router.get("/previsao-gastos-do-mes", response_model=List[PrevisaoPorMes])
+def previsao_gastos_do_mes(
+    db: Session = Depends(get_db),
+    ano = date.today().year 
+):
+    relatorio_gastos_previstos_por_mes_de_um_ano(db, ano)
 
 @router.get("/{id_da_conta_a_pagar_e_receber}", response_model=ContaPagarReceberResponse)
 
@@ -129,6 +149,7 @@ def criar_conta(
 
     valida_fornecedor(conta_a_pagar_e_receber_request.fornecedor_cliente_id, db)
 
+    valida_se_pode_registrar_novas_contas(conta_a_pagar_e_receber_request, db)
     # Lógica para salvar a conta no banco de dados
 
     # Converte os dados recebidos pela API (Pydantic)
@@ -207,7 +228,7 @@ def baixar_conta(
     if (conta_a_pagar_e_receber.esta_baixada and conta_a_pagar_e_receber.valor != conta_a_pagar_e_receber.valor_baixa):
         return conta_a_pagar_e_receber
     
-    conta_a_pagar_e_receber.data_baixa = datetime.now()
+    conta_a_pagar_e_receber.data_baixa = date.today()
     conta_a_pagar_e_receber.esta_baixada = True
     conta_a_pagar_e_receber.valor_baixa = conta_a_pagar_e_receber.valor
 
@@ -252,3 +273,55 @@ def valida_fornecedor(fornecedor_cliente_id, db):
                 status_code = 422, 
                 detail = "Esse fornecedor não existe no banco de dados"
             )
+
+def valida_se_pode_registrar_novas_contas(
+    contas_a_pagar_e_receber_request: ContaPagarReceberRequest,
+    db: Session    
+) -> None:
+    
+    if recupera_numero_de_registros(
+        db, 
+        contas_a_pagar_e_receber_request.data_previsao.year,
+        contas_a_pagar_e_receber_request.data_previsao.month
+    ) >= QUANTIDADE_PERMITIDA_POR_MES:
+        raise HTTPException(
+            status_code=422, 
+            detail="Você não pode mais lançar contas para esse mês"
+        )
+
+def recupera_numero_de_registros(db, ano, mes) -> int:
+    quantidade_de_registros = db.query(ContasPagarReceber).filter(
+        extract('year', ContasPagarReceber.data_previsao) == ano
+    ).filter(
+        extract('month', ContasPagarReceber.data_previsao) == mes
+    ).count()
+
+    return quantidade_de_registros
+
+def relatorio_gastos_previstos_por_mes_de_um_ano(db, ano) -> List[PrevisaoPorMes]:
+    # Traz ordenado do SQL
+    contas = db.query(ContasPagarReceber).filter(
+        extract('year', ContasPagarReceber.data_previsao) == ano
+    ).filter(
+        ContasPagarReceber.tipo == ContaPagarReceberTipoEnum.PAGAR
+    ).order_by(ContasPagarReceber.data_previsao).all()
+
+    # Garante que o dicionário é ordenado
+    valor_por_mes = OrderedDict()
+
+    for conta in contas:
+        # Valor e data da previsão
+        mes = conta.data_previsao.month
+        # valor = conta.valor
+
+        if valor_por_mes.get(conta.data_previsao.month) is None:
+            # Quando não tem o mês criado no dicionário
+            valor_por_mes[mes] = 0
+
+        valor_por_mes[mes] += conta.valor
+
+    return [PrevisaoPorMes(mes = k, valor_total = v) for k, v in valor_por_mes.items()]
+
+    # Alternativamente
+    # for k, g in groupby(contas, lambda x: x.data_previsao.month):
+        # print({k: sum([v.valor for v in g])})

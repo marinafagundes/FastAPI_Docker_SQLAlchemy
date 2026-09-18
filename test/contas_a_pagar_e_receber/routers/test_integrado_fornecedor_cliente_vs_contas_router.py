@@ -57,7 +57,8 @@ def test_deve_listar_contas_de_um_fornecedor_cliente():
             'descricao': 'Curso de Python', 
             'valor': '1000.5', 
             'tipo': 'PAGAR',
-            'fornecedor_cliente_id': 2
+            'fornecedor_cliente_id': 2,
+            'data_previsao': '2022-11-29'
         }
     )
 
@@ -67,7 +68,8 @@ def test_deve_listar_contas_de_um_fornecedor_cliente():
             'descricao': 'Curso de Guitarra', 
             'valor': '5000', 
             'tipo': 'PAGAR',
-            'fornecedor_cliente_id': 1
+            'fornecedor_cliente_id': 1, 
+            'data_previsao': '2022-11-29'
         }
     )
 
@@ -77,7 +79,8 @@ def test_deve_listar_contas_de_um_fornecedor_cliente():
             'descricao': 'Curso de Baixo', 
             'valor': '6000', 
             'tipo': 'PAGAR',
-            'fornecedor_cliente_id': 1
+            'fornecedor_cliente_id': 1, 
+            'data_previsao': '2022-11-29'
         }
     )
 
