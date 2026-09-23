@@ -1,13 +1,10 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from enum import Enum
-from typing import List, OrderedDict
+from typing import List
 
-# Alternativa de dicionário
-# from itertools import groupby
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import extract
 from sqlalchemy.orm import Session
 
@@ -17,311 +14,164 @@ from contas_a_pagar_e_receber.routers.fornecedor_cliente_router import Fornecedo
 from shared.dependencies import get_db
 from shared.exceptions import NotFound
 
-# Cria um router específico para as operações relacionadas
-# às contas a pagar e a receber
-router = APIRouter(
-    prefix="/contas-a-pagar-e-receber"
-)
-
+router = APIRouter(prefix="/contas-a-pagar-e-receber", tags=["Contas"])
 QUANTIDADE_PERMITIDA_POR_MES = 100
 
-# ============================================================
-# MODELOS DE DADOS DA API
-# ============================================================
+class ContaPagarReceberTipoEnum(str, Enum):
+    PAGAR = "PAGAR"
+    RECEBER = "RECEBER"
 
-# Modelo usado para definir o formato dos dados que a API
-# irá DEVOLVER ao cliente.
-
-# O id faz parte da resposta porque ele é gerado pelo banco
-# de dados quando uma nova conta é criada.
-
-# Definir objeto Contas (Response) para representar a conta a pagar ou receber
-# Objeto de resposta
 class ContaPagarReceberResponse(BaseModel):
     id: int
     descricao: str
     valor: Decimal
-    tipo: str  # "PAGAR" ou "RECEBER"
-    data_previsao = date # Sempre será preenchida
-    data_baixa = date | None = None  # Data de baixa da conta
-    valor_baixa = Decimal | None = None
-    esta_baixada = bool | None = None
-    fornecedor: FornecedorClienteResponse | None = None  
-
-    # Permite que o Pydantic receba diretamente um objeto
-    # do SQLAlchemy (ORM) e o transforme em uma resposta.
-    # Assim, podemos retornar o objeto ContasPagarReceber
-    # diretamente, sem precisar criar manualmente um
-    # ContaPagarReceberResponse.
-    class Config:
-        orm_mode = True  # Permite que o Pydantic converta objetos ORM em dicionários
-
-class ContaPagarReceberTipoEnum(str,Enum):
-    PAGAR = "PAGAR"
-    RECEBER = "RECEBER"
-
-# Modelo usado para definir os dados que a API espera
-# RECEBER do cliente ao criar uma nova conta.
-
-# O id não é informado pelo cliente porque ele será
-# gerado automaticamente pelo banco de dados.
-
-# Definir objeto Contas (Request) para receber os dados da conta a pagar ou receber
-# Objeto de requisição
-class ContaPagarReceberRequest(BaseModel):
-    # Não tem o id
-
-    # Entre 3 e 30 caracteres
-    descricao: str = Field(min_length=3, max_length=30)
-
-    # Valor maior do que 0
-    valor: Decimal = Field(gt=0)
-
-    # Cria o tipo específico ENUM 
-    # Para permitir apenas PAGAR ou RECEBER
     tipo: ContaPagarReceberTipoEnum
+    data_previsao: date
+    data_baixa: date | None = None
+    valor_baixa: Decimal | None = None
+    esta_baixada: bool
+    fornecedor: FornecedorClienteResponse | None = None
 
-    # Id do Fornecedor ou Cliente associado à conta
+    model_config = ConfigDict(from_attributes=True)
+
+class ContaPagarReceberRequest(BaseModel):
+    descricao: str = Field(min_length=3, max_length=30)
+    valor: Decimal = Field(gt=0)
+    tipo: ContaPagarReceberTipoEnum
     fornecedor_cliente_id: int | None = None
-
-    data_previsao = date 
+    data_previsao: date
 
 class PrevisaoPorMes(BaseModel):
     mes: int
     valor_total: Decimal
 
-# ============================================================
-# ROTAS
-# ============================================================
-
-# GET /contas-a-pagar-e-receber
-
-# Retorna todas as contas cadastradas no banco de dados.
-
-# response_model define o formato esperado da resposta:
-# uma lista de objetos ContaPagarReceberResponse.
-
-# Se tiver "/" no final, o FastAPI entende que sempre precisa ter o "/" no final da rota,
-# caso contrário, não precisa do "/"
 @router.get("", response_model=List[ContaPagarReceberResponse])
-def listar_contas(
-    db: Session = Depends(get_db)
-)-> List[ContaPagarReceberResponse]:
+def listar_contas(db: Session = Depends(get_db)):
+    return db.query(ContasPagarReceber).order_by(ContasPagarReceber.id).all()
 
-    # Consulta a tabela ContasPagarReceber e retorna
-    # todas as contas cadastradas.
-    return db.query(ContasPagarReceber).all()
-
-# A ordem importa: a url fixa deve estar antes de uma url variável
 @router.get("/previsao-gastos-do-mes", response_model=List[PrevisaoPorMes])
 def previsao_gastos_do_mes(
+    ano: int = Query(default_factory=lambda: date.today().year),
     db: Session = Depends(get_db),
-    ano = date.today().year 
 ):
-    relatorio_gastos_previstos_por_mes_de_um_ano(db, ano)
+    return relatorio_gastos_previstos_por_mes_de_um_ano(db, ano)
 
 @router.get("/{id_da_conta_a_pagar_e_receber}", response_model=ContaPagarReceberResponse)
-
-def obter_conta_por_id(id_da_conta_a_pagar_e_receber: int,
-                       db: Session = Depends(get_db)) -> List[ContaPagarReceberResponse]:
+def obter_conta_por_id(
+    id_da_conta_a_pagar_e_receber: int,
+    db: Session = Depends(get_db),
+):
     return busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
 
-
-# POST /contas-a-pagar-e-receber
-
-# Cria uma nova conta no banco de dados.
-
-# status_code=201 indica que um novo recurso foi criado
-# com sucesso.
-
-# Na maioria dos métodos POST
-# Se retorna algo
-@router.post(
-    "", 
-    response_model=ContaPagarReceberResponse, 
-    status_code=201
-)
-
+@router.post("", response_model=ContaPagarReceberResponse, status_code=201)
 def criar_conta(
-    conta_a_pagar_e_receber_request: ContaPagarReceberRequest, 
-    db: Session = Depends(get_db)
-) -> ContaPagarReceberResponse:
-
+    conta_a_pagar_e_receber_request: ContaPagarReceberRequest,
+    db: Session = Depends(get_db),
+):
     valida_fornecedor(conta_a_pagar_e_receber_request.fornecedor_cliente_id, db)
-
     valida_se_pode_registrar_novas_contas(conta_a_pagar_e_receber_request, db)
-    # Lógica para salvar a conta no banco de dados
 
-    # Converte os dados recebidos pela API (Pydantic)
-    # em um objeto do modelo do SQLAlchemy.
-    # O ** desempacota os campos do request para que eles
-    # sejam passados como argumentos do modelo.
-    contas_a_pagar_e_receber = ContasPagarReceber(
-        **conta_a_pagar_e_receber_request.dict()
-    )
-
-    # Adiciona o objeto à sessão do SQLAlchemy.
-    # Neste momento, ele ainda não foi efetivamente
-    # gravado no banco de dados.
-    db.add(contas_a_pagar_e_receber)
-
-    # Confirma a transação e grava a nova conta no banco.
-    # Como a sessão não utiliza autocommit, o commit precisa
-    # ser realizado explicitamente.
+    conta = ContasPagarReceber(**conta_a_pagar_e_receber_request.model_dump())
+    db.add(conta)
     db.commit()
-    
-    # Atualiza o objeto com os dados gerados pelo banco.
-        # Por exemplo, o banco pode gerar automaticamente o id.
-        # O refresh faz com que esse id seja carregado no objeto.a
-    db.refresh(contas_a_pagar_e_receber)
+    db.refresh(conta)
+    return conta
 
-    # Retorna a conta criada.
-    # Graças ao orm_mode, o FastAPI/Pydantic consegue
-    # transformar o objeto do SQLAlchemy em uma resposta
-    # no formato definido por ContaPagarReceberResponse.    
-    return contas_a_pagar_e_receber
-
-# CRUD: Create, Read, Update e Delete
-
-# Na maioria dos métodos POST
-# Se retorna algo
-@router.put(
-    "/{id_da_conta_a_pagar_e_receber}", 
-    response_model=ContaPagarReceberResponse, 
-    status_code=200
-)
-
-# Acrescenta o id da conta
+@router.put("/{id_da_conta_a_pagar_e_receber}", response_model=ContaPagarReceberResponse)
 def atualizar_conta(
-    id_da_conta_a_pagar_e_receber: int, 
-    conta_a_pagar_e_receber_request: ContaPagarReceberRequest, 
-    db: Session = Depends(get_db)
-) -> ContaPagarReceberResponse:
-
+    id_da_conta_a_pagar_e_receber: int,
+    conta_a_pagar_e_receber_request: ContaPagarReceberRequest,
+    db: Session = Depends(get_db),
+):
     valida_fornecedor(conta_a_pagar_e_receber_request.fornecedor_cliente_id, db)
 
-    conta_a_pagar_e_receber = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
-    conta_a_pagar_e_receber.tipo = conta_a_pagar_e_receber_request.tipo
-    conta_a_pagar_e_receber.valor = conta_a_pagar_e_receber_request.valor
-    conta_a_pagar_e_receber.descricao = conta_a_pagar_e_receber_request.descricao
-    conta_a_pagar_e_receber.fornecedor_cliente_id = conta_a_pagar_e_receber_request.fornecedor_cliente_id
+    conta = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
+    for campo, valor in conta_a_pagar_e_receber_request.model_dump().items():
+        setattr(conta, campo, valor)
 
-    db.add(conta_a_pagar_e_receber)
+    # Se uma conta já baixada for alterada, a baixa deixa de representar
+    # o novo valor até que a conta seja baixada novamente.
+    if conta.esta_baixada:
+        conta.data_baixa = None
+        conta.valor_baixa = None
+        conta.esta_baixada = False
+
     db.commit()
-    db.refresh(conta_a_pagar_e_receber)
-    return conta_a_pagar_e_receber
+    db.refresh(conta)
+    return conta
 
-@router.post(
-    "/{id_da_conta_a_pagar_e_receber}/baixar", 
-    response_model=ContaPagarReceberResponse, 
-    status_code=200
-)
-
-# Acrescenta o id da conta
+@router.post("/{id_da_conta_a_pagar_e_receber}/baixar", response_model=ContaPagarReceberResponse)
 def baixar_conta(
-    id_da_conta_a_pagar_e_receber: int, 
-    db: Session = Depends(get_db)
-) -> ContaPagarReceberResponse:
-    
-    conta_a_pagar_e_receber = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
+    id_da_conta_a_pagar_e_receber: int,
+    db: Session = Depends(get_db),
+):
+    conta = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
 
-    if (conta_a_pagar_e_receber.esta_baixada and conta_a_pagar_e_receber.valor != conta_a_pagar_e_receber.valor_baixa):
-        return conta_a_pagar_e_receber
-    
-    conta_a_pagar_e_receber.data_baixa = date.today()
-    conta_a_pagar_e_receber.esta_baixada = True
-    conta_a_pagar_e_receber.valor_baixa = conta_a_pagar_e_receber.valor
+    if conta.esta_baixada:
+        return conta
 
-    db.add(conta_a_pagar_e_receber)
+    conta.data_baixa = date.today()
+    conta.esta_baixada = True
+    conta.valor_baixa = conta.valor
+
     db.commit()
-    db.refresh(conta_a_pagar_e_receber)
+    db.refresh(conta)
+    return conta
 
-    return conta_a_pagar_e_receber
-
-@router.delete(
-    "/{id_da_conta_a_pagar_e_receber}",
-    status_code=204
-)
-
+@router.delete("/{id_da_conta_a_pagar_e_receber}", status_code=204)
 def excluir_conta(
     id_da_conta_a_pagar_e_receber: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> None:
-    
-    conta_a_pagar_e_receber = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
-
-    db.delete(conta_a_pagar_e_receber)
+    conta = busca_conta_por_id(id_da_conta_a_pagar_e_receber, db)
+    db.delete(conta)
     db.commit()
 
-def busca_conta_por_id(
-    id_da_conta_a_pagar_e_receber: int, 
-    db: Session
-) -> ContasPagarReceber:
-    
-    conta_a_pagar_e_receber = db.query(ContasPagarReceber).get(id_da_conta_a_pagar_e_receber)
-
-    if conta_a_pagar_e_receber is None:
+def busca_conta_por_id(id_da_conta_a_pagar_e_receber: int, db: Session) -> ContasPagarReceber:
+    conta = db.get(ContasPagarReceber, id_da_conta_a_pagar_e_receber)
+    if conta is None:
         raise NotFound("Conta a Pagar e Receber")
+    return conta
 
-    return conta_a_pagar_e_receber
-
-def valida_fornecedor(fornecedor_cliente_id, db):
-    if fornecedor_cliente_id is not None:
-        conta_a_pagar_e_receber = db.query(FornecedorCliente).get(fornecedor_cliente_id)
-        if conta_a_pagar_e_receber is None:
-            raise HTTPException(
-                status_code = 422, 
-                detail = "Esse fornecedor não existe no banco de dados"
-            )
+def valida_fornecedor(fornecedor_cliente_id: int | None, db: Session) -> None:
+    if fornecedor_cliente_id is None:
+        return
+    fornecedor = db.get(FornecedorCliente, fornecedor_cliente_id)
+    if fornecedor is None:
+        raise HTTPException(status_code=422, detail="Esse fornecedor não existe no banco de dados")
 
 def valida_se_pode_registrar_novas_contas(
-    contas_a_pagar_e_receber_request: ContaPagarReceberRequest,
-    db: Session    
+    request: ContaPagarReceberRequest,
+    db: Session,
 ) -> None:
-    
-    if recupera_numero_de_registros(
-        db, 
-        contas_a_pagar_e_receber_request.data_previsao.year,
-        contas_a_pagar_e_receber_request.data_previsao.month
-    ) >= QUANTIDADE_PERMITIDA_POR_MES:
-        raise HTTPException(
-            status_code=422, 
-            detail="Você não pode mais lançar contas para esse mês"
-        )
+    quantidade = recupera_numero_de_registros(
+        db,
+        request.data_previsao.year,
+        request.data_previsao.month,
+    )
+    if quantidade >= QUANTIDADE_PERMITIDA_POR_MES:
+        raise HTTPException(status_code=422, detail="Você não pode mais lançar contas para esse mês")
 
-def recupera_numero_de_registros(db, ano, mes) -> int:
-    quantidade_de_registros = db.query(ContasPagarReceber).filter(
-        extract('year', ContasPagarReceber.data_previsao) == ano
-    ).filter(
-        extract('month', ContasPagarReceber.data_previsao) == mes
-    ).count()
+def recupera_numero_de_registros(db: Session, ano: int, mes: int) -> int:
+    return (
+        db.query(ContasPagarReceber)
+        .filter(extract("year", ContasPagarReceber.data_previsao) == ano)
+        .filter(extract("month", ContasPagarReceber.data_previsao) == mes)
+        .count()
+    )
 
-    return quantidade_de_registros
+def relatorio_gastos_previstos_por_mes_de_um_ano(db: Session, ano: int) -> List[PrevisaoPorMes]:
+    contas = (
+        db.query(ContasPagarReceber)
+        .filter(extract("year", ContasPagarReceber.data_previsao) == ano)
+        .filter(ContasPagarReceber.tipo == ContaPagarReceberTipoEnum.PAGAR.value)
+        .order_by(ContasPagarReceber.data_previsao)
+        .all()
+    )
 
-def relatorio_gastos_previstos_por_mes_de_um_ano(db, ano) -> List[PrevisaoPorMes]:
-    # Traz ordenado do SQL
-    contas = db.query(ContasPagarReceber).filter(
-        extract('year', ContasPagarReceber.data_previsao) == ano
-    ).filter(
-        ContasPagarReceber.tipo == ContaPagarReceberTipoEnum.PAGAR
-    ).order_by(ContasPagarReceber.data_previsao).all()
-
-    # Garante que o dicionário é ordenado
-    valor_por_mes = OrderedDict()
-
+    valores_por_mes: dict[int, Decimal] = {}
     for conta in contas:
-        # Valor e data da previsão
         mes = conta.data_previsao.month
-        # valor = conta.valor
+        valores_por_mes[mes] = valores_por_mes.get(mes, Decimal("0")) + conta.valor
 
-        if valor_por_mes.get(conta.data_previsao.month) is None:
-            # Quando não tem o mês criado no dicionário
-            valor_por_mes[mes] = 0
-
-        valor_por_mes[mes] += conta.valor
-
-    return [PrevisaoPorMes(mes = k, valor_total = v) for k, v in valor_por_mes.items()]
-
-    # Alternativamente
-    # for k, g in groupby(contas, lambda x: x.data_previsao.month):
-        # print({k: sum([v.valor for v in g])})
+    return [PrevisaoPorMes(mes=mes, valor_total=valor) for mes, valor in valores_por_mes.items()]
